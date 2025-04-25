@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reconocimiento de Dígitos MNIST</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            border: 2px solid #333;
+            margin: 20px 0;
+            cursor: crosshair;
+        }
+        .button-group {
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 15px;
+            margin: 0 5px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #clear {
+            background-color: #f44336;
+        }
+        #clear:hover {
+            background-color: #d32f2f;
+        }
+        #result {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 20px 0;
+            text-align: center;
+        }
+        #confidence {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .probabilities {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 500px;
+            margin-top: 20px;
+        }
+        .probability-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 40px;
+        }
+        .bar {
+            width: 30px;
+            background-color: #2196F3;
+            margin-bottom: 5px;
+        }
+        .digit {
+            font-weight: bold;
+        }
+        #api-url {
+            width: 100%;
+            padding: 10px;
+            margin: 20px 0;
+            font-size: 16px;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Reconocimiento de Dígitos MNIST</h1>
+    
+    <div class="container">
+        <p>Dibuja un dígito (0-9) en el lienzo y haz clic en "Predecir"</p>
+        
+        <label for="api-url">URL de la API (reemplaza con la URL de Ngrok):</label>
+        <input type="text" id="api-url" placeholder="https://tu-url-de-ngrok.com">
+        
+        <canvas id="canvas" width="280" height="280"></canvas>
+        
+        <div class="button-group">
+            <button id="predict">Predecir</button>
+            <button id="clear">Limpiar</button>
+        </div>
+        
+        <div class="spinner" id="spinner"></div>
+        
+        <div id="result">-</div>
+        <div id="confidence"></div>
+        
+        <div class="probabilities" id="probabilities">
+            <!-- Las barras de probabilidad se generarán aquí -->
+        </div>
+    </div>
+
+    <script>
+        // Configuración del canvas para dibujar
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const predict = document.getElementById('predict');
+        const clear = document.getElementById('clear');
+        const result = document.getElementById('result');
+        const confidence = document.getElementById('confidence');
+        const probabilitiesContainer = document.getElementById('probabilities');
+        const apiUrlInput = document.getElementById('api-url');
+        const spinner = document.getElementById('spinner');
+        
+        // Inicializar canvas
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.lineWidth = 15;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'black';
+        
+        let isDrawing = false;
+        
+        // Eventos de dibujo en canvas
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        
+        // Soporte táctil
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        canvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup');
+            canvas.dispatchEvent(mouseEvent);
+        });
+        
+        // Funciones de dibujo
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+        }
+        
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            ctx.beginPath();
+            ctx.moveTo(lastX || x, lastY || y);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            
+            [lastX, lastY] = [x, y];
+        }
+        
+        function stopDrawing() {
+            isDrawing = false;
+            [lastX, lastY] = [undefined, undefined];
+        }
+        
+        // Botón limpiar
+        clear.addEventListener('click', function() {
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            result.textContent = '-';
+            confidence.textContent = '';
+            probabilitiesContainer.innerHTML = '';
+        });
+        
+        // Botón predecir
+        predict.addEventListener('click', async function() {
+            const apiUrl = apiUrlInput.value.trim();
+            if (!apiUrl) {
+                alert('Por favor, ingresa la URL de la API');
+                return;
+            }
+            
+            try {
+                // Mostrar spinner
+                spinner.style.display = 'block';
+                
+                // Obtener imagen del canvas como base64
+                const imageData = canvas.toDataURL('image/png').split(',')[1];
+                
+                // Enviar la imagen a la API
+                const response = await fetch(`${apiUrl}/predict-image`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Error en la respuesta de la API');
+                }
+                
+                const data = await response.json();
+                
+                // Mostrar resultado
+                result.textContent = `Dígito: ${data.predicted_digit}`;
+                confidence.textContent = `Confianza: ${(data.confidence * 100).toFixed(2)}%`;
+                
+                // Mostrar probabilidades para cada dígito
+                probabilitiesContainer.innerHTML = '';
+                
+                for (let i = 0; i < 10; i++) {
+                    const prob = data.probabilities[i] || 0;
+                    const height = Math.max(prob * 150, 2); // Al menos 2px de altura
+                    
+                    const digitContainer = document.createElement('div');
+                    digitContainer.className = 'probability-bar';
+                    
+                    const bar = document.createElement('div');
+                    bar.className = 'bar';
+                    bar.style.height = `${height}px`;
+                    
+                    const digit = document.createElement('div');
+                    digit.className = 'digit';
+                    digit.textContent = i;
+                    
+                    digitContainer.appendChild(bar);
+                    digitContainer.appendChild(digit);
+                    probabilitiesContainer.appendChild(digitContainer);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                result.textContent = 'Error en la predicción';
+                confidence.textContent = '';
+            } finally {
+                // Ocultar spinner
+                spinner.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
